@@ -1,0 +1,321 @@
+#lang racket/base
+
+;------------------------------------------------------------------------------
+; CS 330 Fall 2020 Programming Exercise 4 - Symbolic Differentiation
+;
+; author:  Hampton Ford
+;
+; date:  10/31/2020
+;
+; Documentation:
+;   Course slides and videos/lectures
+;   EI w/ Dr. Hadfield to work through Lab25 functions
+;   Rewrote make-product to simplify more based on "Comp Sci 330 - Lesson 27 Lab" instructions
+;   Tested derivatives w/
+;    --https://www.symbolab.com/solver/ordinary-differential-equation-calculator/%5Cfrac%7Bd%7D%7Bdx%7D%5Cleft(5%5E%7Bx%7D%5Cright)
+;   EI w/ Dr. Hadfield to work on deriv structure
+;   Referenced **A LOT** of Racket Documentation on their official website
+;   Special shoutout to Piano Covers by Music Design Group on Spotify for the soul soothing piano music
+;
+;
+; I ommitted some functions from the template on purpose in favor of built-ins or base provided functions.
+;
+; Notes: This function is concerned with only 3 data types and will act as those others don't exist:
+;   -values
+;   -variables
+;   -lists
+;------------------------------------------------------------------------------
+
+;------------------------------------------------------------------------------
+; MISCELLANEOUS SUPPORT and WRAPPER FUNCTIONS
+;------------------------------------------------------------------------------
+
+; Test data types:
+; number? built-in
+; variable? -- see below
+; atom? listed in official documentation but nowhere to be found... see below
+
+
+; (variable? E) - Is E a variable (single symbol and not a number)?
+; PRECONDITIONS: E is a list or atom
+; POSTCONDITIONS: returns #t or #f (no side-effects)
+; EXAMPLE USE:  (variable? 'x) returns #t
+(define (variable? E)
+  (if (and (not (number? E)) (not (list? E))) #t #f))
+
+; (atom? E) - Is E a single symbol?
+; PRECONDITIONS: E is a list or atom
+; POSTCONDITIONS: returns #t or #f (no side-effects)
+; EXAMPLE USE:  (atom? 5) returns #t
+(define (atom? E)
+  (if (or (number? E) (variable? E)) #t #f))
+;------------------------------------------------------------------------------
+
+; Test if specifically two numbers are equal:
+; =number?
+
+; (=number? EXP NUM) - checks if EXP is a number and equal to NUM
+;
+; PRECONDITIONS: EXP is an expression list, NUM is a number
+; POSTCONDITIONS: #t returned if EXP is a number and equal to NUM,
+;         otherwise #f
+; EXAMPLE USE: (=number? 5 5) returns #t
+(define (=number? EXP NUM)
+  (if (and (number? EXP) (number? NUM)) (equal? EXP NUM) #f))
+
+;------------------------------------------------------------------------------
+
+; Test command validity for calculator:
+; sum?
+; difference?
+; product?
+; quotient?
+; **?
+
+; For functions in section:
+; PRECONDITIONS: none
+; POSTCONDITIONS: returs #t or #f depending on if E fits data operation 
+; EXAMPLE USE: (sum? '(+ x (**? (+ 5 a) (- c a)))) returns #t while (quotient? '/) returns #f
+
+(define (sum? E)
+  (if (not (list? E)) #f
+      (if (not (equal? (length E) 3)) #f    ; until here generic test for E as list w/ 3 expressions
+          (if (equal? (car E) '+) #t #f))))
+
+(define (difference? E)
+  (if (not (list? E)) #f
+      (if (not (equal? (length E) 3)) #f    ; until here generic test for E as list w/ 3 expressions
+          (if (equal? (car E) '-) #t #f))))
+
+(define (product? E)
+    (if (not (list? E)) #f
+      (if (not (equal? (length E) 3)) #f    ; until here generic test for E as list w/ 3 expressions
+          (if (equal? (car E) '*) #t #f))))
+
+(define (quotient? E)
+    (if (not (list? E)) #f
+      (if (not (equal? (length E) 3)) #f    ; until here generic test for E as list w/ 3 expressions
+          (if (equal? (car E) '/) #t #f)))) ; chose to let language handle divide by zero since I would just throw the same error anyways
+
+(define (**? E)
+    (if (not (list? E)) #f
+      (if (not (equal? (length E) 3)) #f    ; until here generic test for E as list w/ 3 expressions
+          (if (equal? (car E) '**) #t #f))))
+
+;------------------------------------------------------------------------------
+
+; Wrapper functions to simplify std operations - why print '(a + 0) when you can simplify that to 'a
+; NOTE: These functions should never be called directly, but instead only be called recursively or by compute
+; make-sum
+; make-difference
+; make-product
+; make-quotient
+; make-**
+
+; (make-NAME A B) - returns a simplified sum for A + B
+;
+; PRECONDITIONS: corresponding sum?, difference?, quotient?, etc has been called and is true
+; POSTCONDITIONS: list expression (+ A B) or reduced form
+;        if either A or B is zero or both are numbers
+; EXAMPLE USE: (make-sum 'x 5) returns (+ x 5)
+
+(define (make-sum A B)
+  (cond
+    ((and (list? A) (list? B)) (make-sum (eval A) (eval B)))                ; two lists
+    ((and (atom? A) (list? B)) (make-sum A (eval B)))                       ; 1 atom, 1 list
+    ((and (atom? B) (list? A)) (make-sum B (eval A)))                       ; 1 atom, 1 list
+    ; all atoms now - test variables and numbers
+    ((and (variable? A) (variable? B)) (list '+ A B))                        ; 2 variables
+    ((and (number? A) (variable? B))                                         ; 1 number, 1 variable
+     (if (=number? A 0) B (list '+ B A)))
+    ((and (number? B) (variable? A))                                         ; 1 number, 1 variable
+     (if (=number? B 0) A (list '+ A B)))
+    ((and (number? A) (number? B)) (+ A B))                                  ; 2 numbers - all possibilities exhausted
+    (else (error "Invalid expression. Please try again."))))
+
+; make-difference
+
+(define (make-product M1 M2)
+  (cond ((or (=number? M1 0) (=number? M2 0)) 0)
+        ((=number? M1 1) M2)
+        ((=number? M2 1) M1)
+        ((and (number? M1) (number? M2)) (* M1 M2))
+        (else (list '* M1 M2))))
+
+(define (make-quotient M1 M2)
+  (cond ((=number? M2 0) (error "Dividing by infinity in make-quotient")) ; handle DIV by 0
+        ((=number? M1 0) 0)                              ; 0 in numerator is just 0
+        ((=number? M2 1) M1)                             ; V=1 on bottom is just U
+        ((and (number? M1) (number? M2)) (/ M1 M2))      ; Actually divide U/V
+        (else (list '/ M1 M2))))
+
+(define (** BASE EXPONENT)
+  (if (or (not (variable? BASE)) (not (number? EXPONENT)))   ; check input first
+      (error "Bad expr. Use format: (** <atom> <integer>).")
+      (if (=number? EXPONENT 0) 1
+      (if (=number? EXPONENT 1) BASE
+          (if (and (integer? BASE) (integer? EXPONENT)) (expt BASE EXPONENT) (list '** BASE EXPONENT))))))
+
+(define (make-exp M1)
+    (if (number? M1) (exp M1) (list 'exp M1)))
+
+;------------------------------------------------------------------------------
+
+; Create a controller for each operation that allows general expressions to be easily handled:
+; compute
+
+; (compute E) - calls the next supported operation on a list else throws an error on invalid input
+;
+; PRECONDITIONS: dependencies above
+; POSTCONDITIONS: simplified answer for any supported operation
+; EXAMPLE USE: (compute '(- x 0)) returns x
+(define (eval E)
+  (cond
+    ((sum? E) (make-sum (cadr E) (cadr (cdr E))))
+    ;((difference? E) (make-difference (cadr E) (cadr (cdr E))))
+    ((product? E) (make-product (cadr E) (cadr (cdr E))))
+    ((quotient? E) (make-quotient (cadr E) (cadr (cdr E))))
+    ;((**? E) (make-** (cadr E) (cadr (cdr E))))
+    (else (error "Invalid expression. Please try again."))))
+
+
+;==============================================================================================================
+;****** PREDICATES AND DERIV HELPERS ***********
+; d-foo? functions are meant to include test for everything and include calls to previously defined MISC Help Functions
+; deriv-foo functions will actually take the derivatives
+
+;PRECONDITIONS: Operations take the appropriate form (e.g- (deriv-sum '(+ x 5) 'x) -)
+;--------------------------------------------------------------------------------------------------------------
+; returns true if EXP is an atom, EXAMPLE INPUT: (d-variable? 'x 'x) (d-variable 5 'y)
+; acts a wrapper for variable? for naming consistent naming convention
+(define (d-variable? EXP)
+  (if (variable? EXP) #t #f))
+
+; returns symbolic derivative of a atomic variable
+(define (deriv-variable EXP VAR)                   ; assumes EXP is an b/c d-variable? will have been called
+   (cond
+     ((or (not (equal? EXP VAR))(number? EXP)) 0)  ; treat vars not being differentiated w/ respect to as plain #'s
+     ((equal? EXP VAR) 1)))
+
+
+;------------------------------------------------------------------------------
+; returns true if EXP is a sum
+(define (d-sum? EXP)
+  (if (sum? EXP) #t #f))
+
+; returns the symbolic derivative of a sum
+(define (deriv-sum EXP VAR)
+  (make-sum (deriv-variable (car (cdr EXP)) VAR) (deriv-variable (cadr (cdr EXP)) VAR))) ; add the two derivatives
+
+;------------------------------------------------------------------------------
+; returns true if EXP is a product
+(define (d-product? EXP)
+  (if (product? EXP) #t #f))
+  
+; returns the symbolic derivative of a product
+(define (deriv-product EXP VAR)
+  (make-product (deriv-variable (cadr EXP) VAR) (deriv-variable (cadr (cdr EXP)) VAR)))
+
+;------------------------------------------------------------------------------
+; returns true if EXP is an base to a power and fits input
+; SAMPLE INPUT: (d-power? '(** x 2) 'x) or (d-power? '(** 2 2) 'x) --assumes variable^number so 2**x or x**x is a no-no
+(define (d-power? EXP)
+  (if (and (equal? (car EXP) '**) (and (variable? (cadr EXP)) (number? (cadr (cdr EXP))))) #t #f))
+  
+; (deriv-power EXP VAR) assuming d-power? is true
+(define (deriv-power EXP VAR)
+  (if (equal? (deriv-variable (cadr EXP) VAR) 0) 0  ; 0 if base is a constant or not the variable being differentiated
+      (make-product (cadr (cdr EXP)) (** (cadr EXP) (- (cadr (cdr EXP)) 1))))) ; Return simplified expr = exp*base^(exp-1)*deriv-variable(base) 
+      
+;------------------------------------------------------------------------------
+; returns true if we have U/V AND throw infinity error if V = 0
+; SAMPLE INPUT: (d-quotient? '(/ 3 5) 'x) or (... '(/ x 5) 'y) or (... '(/ y / 5) 'y)
+(define (d-quotient? EXP)
+  (if (equal? (car EXP) '/)
+  (if (equal? (variable? (cadr (cdr EXP))) #f) (error "Non-atomic divisor in d-quotient?") ; check divisor is something atomic
+  (if (equal? (cadr (cdr EXP)) 0) (error "Dividing by zero in d-quotient?") #t))
+  #f))
+
+; derive the quotient assuming d-quotient? is satisfied
+(define (deriv-quotient EXP VAR)
+  (make-quotient ('- (make-product (cadr (cdr EXP)) (deriv-variable (cadr EXP) VAR)) (make-product (cadr EXP) (deriv-variable (cadr (cdr EXP)) VAR)))
+                 ('** (cadr (cdr EXP)) 2))) ; (v*'u - u*'v) / v^2
+
+
+;------------------------------------------------------------------------------
+; d-sin needs a input '(sin EXPR) thus input must be list
+(define (d-sin? EXP)
+  (if (equal? (car EXP) 'sin) #t #f))
+
+; PRECONDITIONS: call (d-sin? EXP VAR)
+; d sin(u) = cos(u) * chain rule d (u) -- DON'T FORGET THE NEGATIVE IF DERIVING a negative u
+;(define (deriv-sin EXP VAR)
+;  (make-product (cos EXP) (deriv-variable EXP VAR)))
+
+;------------------------------------------------------------------------------
+(define (d-cos? EXP)
+  (if (variable? EXP) #t #f))
+
+; d cos(u) = (-1 * sin(u)) * (chain rule d (u))  -- DON'T FORGET THE NEGATIVE IF DERIVING a negative u
+
+;------------------------------------------------------------------------------
+; returns true if u in (log u) is not 0
+; SAMPLE INPUT: '(log EXP), 'x
+(define (d-log? EXP VAR)
+  (cond
+    ((not (equal? (car EXP) 'log)) #f)                                        ; check function
+    ((=number? EXP 0) (error "Operation: log(0) is an illegal operation."))   ; check illegal log operation
+    (else (d-variable? (cadr EXP) VAR))))                                     ; TODO fix - intent => check illegal deriv argument         
+
+; (deriv-log EXP VAR)
+(define (deriv-log EXP VAR)
+  (make-product (make-quotient 1 (cadr EXP)) (deriv-variable (cadr EXP) VAR)))
+
+;------------------------------------------------------------------------------
+; deriv-exp viable if if's we're deriving exp
+; SAMPLE INPUT: (d-exp EXP VAR) , where EXP = '(exp x) or '(exp 5) and VAR = 'x
+(define (d-exp? EXP VAR)
+  (if (and (equal? (car EXP) 'exp) (d-variable? (cadr EXP) VAR)) #t #f))
+
+(define (deriv-exp EXP VAR)
+  (make-product (make-exp (cadr EXP)) (deriv-variable (cadr EXP) VAR)))
+;==============================================================================
+;==============================================================================
+;==============================================================================
+; (deriv EXP VAR) - returns expression list that is the derivative
+;          of EXP with respect to VAR
+;
+; PRECONDITIONS:  EXP is a list representing a linear expression,
+;                 VAR is a variable
+; POSTCONDITIONS: returns the derivative of EXP with respect to VAR
+;          returns an error message if improperly formatted expression
+; EXAMPLE USE: (deriv '(+ (* 3 x) (* a x)) 'x) returns (+ 3 a)
+;(define (deriv EXP VAR)...    - accepts prefix prefix expression and produces prefix derivative
+(define (deriv EXP VAR)
+  (cond
+    ((number? EXP) 0)                                        ; derive constant
+  ; past here, functions can receive only variables and lists
+    ((d-variable? EXP) (deriv-variable EXP VAR))             ; derive variables
+  ; past here, functions can receive only lists
+    ((d-sum? EXP) (deriv-sum EXP VAR))                       ; derive sums
+    ((d-product? EXP) (deriv-product EXP VAR))               ; derive products
+    ((d-power? EXP) (deriv-power EXP VAR))                   ; derive expr raised to const powers - e.g. power rule
+    ((d-quotient? EXP) (deriv-quotient EXP VAR))                 ; derive quotients
+    ;((d-sin? EXP) (deriv-sin EXP VAR))                           ; derive sin expressions
+    ;((d-cos? EXP) (deriv-cos EXP VAR))                           ; derive cos expressions
+    ((d-log? EXP) (deriv-log EXP VAR))                           ; derive logs - assuming natural logs per instructions
+    ((d-exp? EXP VAR) (deriv-exp EXP VAR))                           ; derive e^EXP - e.g. exponent rule
+    (else (error "Invalid input to deriv"))))                ; catch all if any EXP or sub-EXP is syntatically invalid 
+
+
+; (eval-deriv EXP VAR VALUE) - evaluates prefix derivative at VAR = VALUE
+;(define (eval-deriv EXP VAR VALUE)...
+; (deriv EXP VAR) --> if (car == VAR) then ret VALUE --> compute
+;-----------------------------------------------------------------------------
+;-----------------------------------------------------------------------------
+; Calls above functions after translating infix to prefix and outputs infix
+; (derivative EXP VAR) - accepts infix expression and produces infix expression
+; inToPost --> deriv --> postToIn
+
+; (eval-derivative EXP VAR VALUE) - evaluates infix derivative at VAR = VALUE
+; (derivative EXP VAR) --> if (car == VAR) then ret VALUE --> compute
